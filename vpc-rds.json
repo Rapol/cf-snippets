@@ -1,0 +1,532 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "CloudFormation template that creates a VPC with 5 subnets. One public subnet for the bastion host and NAT gateway. Two private subnets for the RDS and two private subnets for lambdas. The lambda's subnet will have access to the internet and the RDS hosted in the private network. The RDS will be only accessible from the outside by sshing into the bastion host, all other access is denied",
+  "Resources": {
+    "VPC": {
+      "Type": "AWS::EC2::VPC",
+      "Properties": {
+        "CidrBlock": "10.0.0.0/16",
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
+        "InstanceTenancy": "default",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-vpc"
+          }
+        ]
+      }
+    },
+    "SubnetPublic": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "CidrBlock": "10.0.0.0/24",
+        "AvailabilityZone": "us-east-1a",
+        "MapPublicIpOnLaunch": true,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-subnet-public"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "SubnetRDSPrivate": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "CidrBlock": "10.0.1.0/24",
+        "AvailabilityZone": "us-east-1a",
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-subnet-rds-private"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "SubnetRDSPrivate2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "CidrBlock": "10.0.2.0/24",
+        "AvailabilityZone": "us-east-1b",
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-subnet-rds-private2"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "SubnetLambdaPrivate": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "CidrBlock": "10.0.3.0/24",
+        "AvailabilityZone": "us-east-1a",
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-subnet-lambda-private"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "SubnetLambdaPrivate2": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "CidrBlock": "10.0.4.0/24",
+        "AvailabilityZone": "us-east-1b",
+        "MapPublicIpOnLaunch": false,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-subnet-lambda-private2"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-internet-gateway"
+          }
+        ]
+      }
+    },
+    "VPCGatewayAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "InternetGatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "ElasticIp": {
+      "Type": "AWS::EC2::EIP",
+      "Properties": {
+        "Domain": "vpc"
+      }
+    },
+    "NatGateway": {
+      "DependsOn": "VPCGatewayAttachment",
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId": {
+          "Fn::GetAtt": [
+            "ElasticIp",
+            "AllocationId"
+          ]
+        },
+        "SubnetId": {
+          "Ref": "SubnetPublic"
+        }
+      }
+    },
+    "RouteTableMain": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-route-table-main"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "RouteTablePrivate": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-route-table-private"
+          }
+        ],
+        "VpcId": {
+          "Ref": "VPC"
+        }
+      }
+    },
+    "RoutePublic": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "VPCGatewayAttachment",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "RouteTableMain"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": {
+          "Ref": "InternetGateway"
+        }
+      }
+    },
+    "RoutePrivate": {
+      "Type": "AWS::EC2::Route",
+      "DependsOn": "VPCGatewayAttachment",
+      "Properties": {
+        "RouteTableId": {
+          "Ref": "RouteTablePrivate"
+        },
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": {
+          "Ref": "NatGateway"
+        }
+      }
+    },
+    "SubnetRouteTableAssociationPublic": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "SubnetPublic"
+        },
+        "RouteTableId": {
+          "Ref": "RouteTableMain"
+        }
+      }
+    },
+    "SubnetRouteTableAssociationRDSPrivate": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "SubnetRDSPrivate"
+        },
+        "RouteTableId": {
+          "Ref": "RouteTablePrivate"
+        }
+      }
+    },
+    "SubnetRouteTableAssociationRDSPrivate2": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "SubnetRDSPrivate2"
+        },
+        "RouteTableId": {
+          "Ref": "RouteTablePrivate"
+        }
+      }
+    },
+    "SubnetRouteTableAssociationLambdaPrivate": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "SubnetLambdaPrivate"
+        },
+        "RouteTableId": {
+          "Ref": "RouteTablePrivate"
+        }
+      }
+    },
+    "SubnetRouteTableAssociationLambdaPrivate2": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "SubnetId": {
+          "Ref": "SubnetLambdaPrivate2"
+        },
+        "RouteTableId": {
+          "Ref": "RouteTablePrivate"
+        }
+      }
+    },
+    "SecurityGroupPublic": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Public security group",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": "${officeIp}"
+          }
+        ],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "80",
+            "ToPort": "80",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "443",
+            "ToPort": "443",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "22",
+            "ToPort": "22",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "3306",
+            "ToPort": "3306",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-sg-public"
+          }
+        ]
+      }
+    },
+    "SecurityGroupLambdaPrivate": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Lambda security group",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "SecurityGroupIngress": [],
+        "SecurityGroupEgress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "80",
+            "ToPort": "80",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "443",
+            "ToPort": "443",
+            "CidrIp": "0.0.0.0/0"
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "3306",
+            "ToPort": "3306",
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-sg-lambda-private"
+          }
+        ]
+      }
+    },
+    "SecurityGroupRDSPrivate": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Private RDS security group. Allows RDS access to the public subnet and lambdas",
+        "VpcId": {
+          "Ref": "VPC"
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "3306",
+            "ToPort": "3306",
+            "SourceSecurityGroupId": {
+              "Ref": "SecurityGroupPublic"
+            }
+          },
+          {
+            "IpProtocol": "tcp",
+            "FromPort": "3306",
+            "ToPort": "3306",
+            "SourceSecurityGroupId": {
+              "Ref": "SecurityGroupLambdaPrivate"
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-sg-private"
+          }
+        ]
+      }
+    },
+    "SubnetGroupRDS": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupDescription": "Subnets associated with the RDS",
+        "SubnetIds": [
+          {
+            "Ref": "SubnetRDSPrivate"
+          },
+          {
+            "Ref": "SubnetRDSPrivate2"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-rds-subnet-group"
+          }
+        ]
+      }
+    },
+    "DBInstance": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "DBInstanceIdentifier": "${project}-${stage}-db",
+        "DBName": "${dbName}",
+        "DBInstanceClass": "db.t2.micro",
+        "Engine": "MySQL",
+        "MasterUsername": "${dbUser}",
+        "MasterUserPassword": "${dbPassword}",
+        "AllocatedStorage": "5",
+        "VPCSecurityGroups": [
+          {
+            "Fn::GetAtt": [
+              "SecurityGroupRDSPrivate",
+              "GroupId"
+            ]
+          }
+        ],
+        "DBSubnetGroupName": {
+          "Ref": "SubnetGroupRDS"
+        }
+      }
+    },
+    "BastionResourceRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "ec2.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/AdministratorAccess"
+        ]
+      }
+    },
+    "BastionInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [
+          {
+            "Ref": "BastionResourceRole"
+          }
+        ]
+      }
+    },
+    "BastionInstance": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": "ami-c481fad3",
+        "InstanceType": "t2.micro",
+        "IamInstanceProfile": {
+          "Ref": "BastionInstanceProfile"
+        },
+        "KeyName": "${bastionKey}",
+        "NetworkInterfaces": [
+          {
+            "AssociatePublicIpAddress": "true",
+            "DeviceIndex": "0",
+            "GroupSet": [
+              {
+                "Ref": "SecurityGroupPublic"
+              }
+            ],
+            "SubnetId": {
+              "Ref": "SubnetPublic"
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "${project}-${stage}-bastion"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "RDSEndpoint": {
+      "Description": "RDS endpoint",
+      "Value": {
+        "Fn::GetAtt": [
+          "DBInstance",
+          "Endpoint.Address"
+        ]
+      }
+    },
+    "BastionEndpoint": {
+      "Description": "Bastion endpoint",
+      "Value": {
+        "Fn::GetAtt": [
+          "BastionInstance",
+          "PublicDnsName"
+        ]
+      }
+    },
+    "VPCId": {
+      "Description": "VPC Id",
+      "Value": {
+        "Ref": "VPC"
+      }
+    },
+    "SubnetLambdaPrivateId": {
+      "Description": "Lambda Subnet Id",
+      "Value": {
+        "Ref": "SubnetLambdaPrivate"
+      }
+    },
+    "SubnetLambdaPrivate2Id": {
+      "Description": "Lambda Subnet Id",
+      "Value": {
+        "Ref": "SubnetLambdaPrivate2"
+      }
+    },
+    "SecurityGroupLambdaPrivateId": {
+      "Description": "Lambda Security Group Id",
+      "Value": {
+        "Fn::GetAtt": [
+          "SecurityGroupLambdaPrivate",
+          "GroupId"
+        ]
+      }
+    }
+  }
+}
